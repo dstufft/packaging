@@ -50,7 +50,10 @@ setup(
     author=about["__author__"],
     author_email=about["__email__"],
 
-    install_requires=["pyparsing", "six"],
+    install_requires=["pyparsing", "six",
+                      "effect", "txeffect",
+                      "treq", "requests",
+                      ],
 
     classifiers=[
         "Intended Audience :: Developers",

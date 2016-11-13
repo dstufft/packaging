@@ -10,8 +10,9 @@ import html5lib
 
 from six.moves import urllib_parse
 
-from .base import AvailableFile, BaseRepository, Request
-from ._utils import as_fetcher
+from .base import AvailableFile, BaseRepository
+from ._utils import engined, request
+from effect.do import do, do_return
 from ..utils import canonicalize_name
 
 
@@ -37,7 +38,8 @@ class _HTMLRepository(BaseRepository):
         else:
             return self.url
 
-    @as_fetcher
+    @engined
+    @do
     def fetch(self, project):
 
         # TODO: Is there an order that we should be returning from this? Is
@@ -49,7 +51,7 @@ class _HTMLRepository(BaseRepository):
         #         file. This will work better when we combine multiple
         #         repositories into a single stream of files.
 
-        resp = yield Request(url=self._get_project_url(project))
+        resp = yield request(url=self._get_project_url(project))
 
         _, params = cgi.parse_header(resp.headers.get("Content-Type", ""))
         encoding = params.get("charset")
@@ -90,7 +92,7 @@ class _HTMLRepository(BaseRepository):
                     )
                 )
 
-        return result
+        yield do_return(result)
 
 
 class SimpleRepository(_HTMLRepository):

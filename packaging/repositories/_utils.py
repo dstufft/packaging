@@ -5,44 +5,81 @@ from __future__ import absolute_import, division, print_function
 
 import functools
 
-import attr
-
-from .base import Response
-
-
-@attr.s(cmp=False)
-class _RepositoryFetcher:
-
-    _coro = attr.ib()
-    _finished = attr.ib(default=False, init=False)
-    _result = attr.ib(default=None, init=False)
-
-    @property
-    def finished(self):
-        return self._finished
-
-    def pending_requests(self):
-        if self.finished:
-            return
-        yield next(self._coro)
-
-    def add_response(self, req, content, headers=None):
-        try:
-            self._coro.send(Response(req, content, headers=headers))
-        except StopIteration as exc:
-            self._finished = True
-            self._result = exc.value
-
-    def get_files(self):
-        if not self.finished:
-            raise RuntimeError(
-                "Cannot get files until all data has been fetched."
-            )
-        return self._result
+from .base import Request, Response
+from effect import Effect, sync_perform, sync_performer, ParallelEffects
+from effect.async import perform_parallel_async as perform_parallel_serially
+from effect import base_dispatcher, ComposedDispatcher, TypeDispatcher
 
 
-def as_fetcher(fn):
-    @functools.wraps(fn)
+from txeffect import (
+    make_twisted_dispatcher, deferred_performer, perform as twisted_performer)
+from twisted.internet.defer import inlineCallbacks, returnValue
+
+
+@sync_performer
+def _blocking_request(dispatcher, intent):
+    from requests import get
+    response = get(intent.url)
+    return Response(
+        content=response.content,
+        headers=response.headers,
+    )
+
+_blocking_dispatcher = ComposedDispatcher([
+    TypeDispatcher({Request: _blocking_request
+                    ParallelEffects, perform_parallel_serially,
+                    }),
+    base_dispatcher,
+])
+
+
+def blocking_engine(effect):
+    "Run an effect synchronously"
+    return sync_perform(_blocking_dispatcher, effect)
+
+
+def _turn_twisted_headers_to_dict(headers):
+    return {k: v[0] for (k, v) in headers.getAllRawHeaders().items()}
+
+
+@deferred_performer
+@inlineCallbacks
+def _twisted_request(reactor, dispatcher, intent):
+    from treq import get
+    response = yield get(intent.url, reactor=reactor)
+    returnValue(Response(
+        content=(yield response.get()),
+        headers=_turn_twisted_headers_to_dict(response.headers),
+    ))
+
+
+def get_twisted_engine(reactor):
+    dispatcher = ComposedDispatcher(
+        TypeDispatcher({
+            Request: functools.partial(_twisted_request, reactor)}),
+        make_twisted_dispatcher(reactor),
+        base_dispatcher,
+    )
+
+    def twisted_engine(effect):
+        "Run an effect using twisted."
+        return twisted_performer(dispatcher, effect)
+    return twisted_engine
+
+
+def engined(f):
+    "Turn an effect using function into one that uses a specific performer."
+    @functools.wraps(f)
     def wrapper(*args, **kwargs):
-        return _RepositoryFetcher(fn(*args, **kwargs))
+        engine = kwargs.pop('engine', blocking_engine)
+        effect = f(*args, **kwargs)
+        result = engine(effect)
+        return result
+
+    wrapper.effectfully = f
     return wrapper
+
+
+@engined
+def request(url):
+    return Effect(Request(url))
