@@ -8,7 +8,10 @@ import functools
 import attr
 
 from .base import BaseRepository
-from ._utils import as_fetcher
+from ._utils import engined
+from effect import parallel
+from effect.do import do, do_return
+from itertools import chain
 
 
 @attr.s(cmp=False, slots=True)
@@ -37,20 +40,13 @@ class MultiRepository(BaseRepository):
 
     repositories = attr.ib()
 
-    @as_fetcher
+    @engined
+    @do
     def fetch(self, project):
         results = []
 
-        for repository in self.repositories:
-            fetcher = repository.fetch(project)
-            while not fetcher.finished:
-                for request in fetcher.pending_requests():
-                    resp = yield request
-                    fetcher.add_response(
-                        resp.request,
-                        resp.content,
-                        headers=resp.headers,
-                    )
-            results.extend(fetcher.get_files())
-
-        return results
+        results = yield parallel(
+            repository.fetch.effectfully(project)
+            for repository in self.repositories
+        )
+        do_return(chain(*results))

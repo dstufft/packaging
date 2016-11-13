@@ -18,7 +18,6 @@ class Request(object):
 @attr.s(cmp=False, frozen=True, slots=True)
 class Response(object):
 
-    request = attr.ib()
     content = attr.ib()
     headers = attr.ib(default=attr.Factory(dict))
 
